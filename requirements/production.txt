@@ -1,0 +1,11 @@
+-r base.txt
+
+# Production
+gunicorn
+whitenoise
+django-storages
+boto3
+
+# Monitoring
+sentry-sdk
+newrelic

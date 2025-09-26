@@ -1,0 +1,44 @@
+# Django Core
+Django
+djangorestframework
+django-cors-headers
+django-filter
+django-extensions
+
+# Base de données
+psycopg2-binary
+redis
+django-redis
+
+# Authentification et sécurité
+djangorestframework-simplejwt
+django-oauth-toolkit
+cryptography
+PyJWT
+
+# API Documentation
+drf-spectacular
+drf-spectacular-sidecar
+
+# Utilitaires
+python-decouple
+python-dotenv
+pillow
+django-model-utils
+
+# Validation et sérialisation
+marshmallow
+cerberus
+
+# Monitoring et logging
+django-debug-toolbar
+sentry-sdk
+
+# Tasks asynchrones
+celery
+django-celery-beat
+django-celery-results
+
+# Tests
+factory-boy
+faker

@@ -1,0 +1,25 @@
+-r base.txt
+
+# Développement
+django-debug-toolbar
+django-extensions
+ipython
+jupyter
+
+# Tests
+pytest
+pytest-django
+pytest-cov
+pytest-mock
+model-bakery
+
+# Code quality
+black
+isort
+flake8
+mypy
+pre-commit
+
+# Documentation
+Sphinx
+sphinx-rtd-theme

@@ -6,6 +6,9 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
+from django.utils import timezone
+from rest_framework import permissions
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 def api_root(request):
     """Vue racine de l'API"""
@@ -16,27 +19,40 @@ def api_root(request):
         "endpoints": {
             "admin": "/admin/",
             "api_root": "/api/",
+            "api_docs": "/api/docs/",
+            "api_schema": "/api/schema/",
             "health": "/api/health/",
+            "auth": "/api/auth/"
         },
         "apps": {
             "core": "Configuration de base",
-            "authentication": "Gestion utilisateurs",
-            "inventory": "Gestion stocks",
-            "sales": "Gestion ventes",
-            "suppliers": "Gestion fournisseurs",
+            "authentication": "Gestion utilisateurs et sécurité",
+            "inventory": "Gestion stocks et articles",
+            "sales": "Gestion ventes et point de vente",
+            "suppliers": "Gestion fournisseurs et commandes",
             "reporting": "Rapports et analytics",
-            "sync": "Synchronisation",
+            "sync": "Synchronisation online/offline",
             "licensing": "Système de licence"
         }
     })
 
 def api_health(request):
-    """Vue de vérification de santé"""
+    """Vue de vérification de santé globale"""
+    from django.db import connection
+    
+    try:
+        # Test de connexion DB
+        cursor = connection.cursor()
+        cursor.execute("SELECT 1")
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
     return JsonResponse({
-        "status": "healthy",
-        "database": "connected",
+        "status": "healthy" if db_status == "connected" else "unhealthy",
+        "database": db_status,
         "apps": "loaded",
-        "timestamp": str(request.timestamp) if hasattr(request, 'timestamp') else "unknown"
+        "timestamp": timezone.now().isoformat()
     })
 
 urlpatterns = [
@@ -47,8 +63,12 @@ urlpatterns = [
     path('api/', api_root, name='api-root'),
     path('api/health/', api_health, name='api-health'),
     
-    # URLs des apps (à activer progressivement)
-    # path('api/auth/', include('apps.authentication.urls')),
+    # Documentation API
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    
+    # URLs des apps - ACTIVÉES
+    path('api/auth/', include('apps.authentication.urls')),
     # path('api/inventory/', include('apps.inventory.urls')),
     # path('api/sales/', include('apps.sales.urls')),
     # path('api/suppliers/', include('apps.suppliers.urls')),

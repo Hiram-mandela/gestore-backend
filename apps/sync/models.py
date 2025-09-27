@@ -1,10 +1,9 @@
 """
-Modèles de synchronisation pour GESTORE
+Modèles de synchronisation pour GESTORE - CORRECTION DES RELATIONS
 Système de synchronisation online/offline et résolution de conflits
 """
 import hashlib
 import json
-from decimal import Decimal
 from django.db import models
 from django.core.validators import MinValueValidator
 from django.utils import timezone
@@ -465,10 +464,10 @@ class SyncOperation(BaseModel):
         verbose_name="Conflit détecté"
     )
     
-    conflict_resolution = models.CharField(
+    conflict_resolution_strategy = models.CharField(
         max_length=50,
         blank=True,
-        verbose_name="Résolution de conflit",
+        verbose_name="Stratégie de résolution de conflit",
         help_text="Méthode utilisée pour résoudre le conflit"
     )
     
@@ -534,10 +533,11 @@ class ConflictResolution(BaseModel):
         ('failed', 'Échec'),
     ]
     
+    # CORRECTION: Changement du related_name pour éviter le conflit
     sync_operation = models.OneToOneField(
         SyncOperation,
         on_delete=models.CASCADE,
-        related_name='conflict_resolution',
+        related_name='resolution',  # CHANGÉ de 'conflict_resolution' à 'resolution'
         verbose_name="Opération de sync"
     )
     

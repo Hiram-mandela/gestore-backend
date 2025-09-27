@@ -1,5 +1,5 @@
 """
-Modèles d'authentification et de sécurité pour GESTORE
+Modèles d'authentification et de sécurité pour GESTORE - CORRIGÉ
 Système complet de gestion des utilisateurs, rôles et permissions
 """
 import uuid
@@ -137,12 +137,13 @@ class User(AbstractUser):
         help_text="Numéro de téléphone"
     )
     
-    # Rôle principal
+    # Rôle principal - CORRIGÉ avec related_name
     role = models.ForeignKey(
         Role,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
+        related_name='users',  # AJOUTÉ: relation inverse explicite
         verbose_name="Rôle principal",
         help_text="Rôle principal de l'utilisateur"
     )
@@ -214,6 +215,12 @@ class User(AbstractUser):
                 self.employee_code = 'EMP0001'
         
         super().save(*args, **kwargs)
+        
+        # Créer le profil automatiquement si il n'existe pas
+        try:
+            self.profile
+        except UserProfile.DoesNotExist:
+            UserProfile.objects.create(user=self)
     
     def is_account_locked(self):
         """Vérifie si le compte est verrouillé"""
@@ -400,6 +407,7 @@ class UserSession(BaseModel):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        related_name='sessions',  # AJOUTÉ: relation inverse explicite
         verbose_name="Utilisateur"
     )
     
@@ -462,6 +470,7 @@ class UserAuditLog(BaseModel):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        related_name='audit_logs',  # AJOUTÉ: relation inverse explicite
         verbose_name="Utilisateur"
     )
     

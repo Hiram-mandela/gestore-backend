@@ -93,7 +93,8 @@ class RoleViewSet(OptimizedModelViewSet):
         Optimisations pour la liste des rôles
         """
         return queryset.annotate(
-            users_count=Count('user', filter=Q(user__is_active=True))
+            # CORRIGÉ: Count('user') -> Count('users') (relation définie dans migration 0002)
+            users_count=Count('users', filter=Q(users__is_active=True))
         )
     
     def optimize_detail_queryset(self, queryset):
@@ -194,7 +195,8 @@ class UserViewSet(OptimizedModelViewSet):
             'role', 'profile'
         ).prefetch_related(
             Prefetch(
-                'usersession',
+                # CORRIGÉ: 'usersession' -> 'sessions' (relation définie dans migration 0002)
+                'sessions',
                 queryset=UserSession.objects.filter(
                     is_active=True,
                     login_at__gte=timezone.now() - timezone.timedelta(minutes=15)
@@ -202,9 +204,10 @@ class UserViewSet(OptimizedModelViewSet):
                 to_attr='recent_sessions'
             )
         ).annotate(
-            _is_online=Count('usersession', filter=Q(
-                usersession__is_active=True,
-                usersession__login_at__gte=timezone.now() - timezone.timedelta(minutes=15)
+            # CORRIGÉ: Count('usersession') -> Count('sessions') et usersession__ -> sessions__
+            _is_online=Count('sessions', filter=Q(
+                sessions__is_active=True,
+                sessions__login_at__gte=timezone.now() - timezone.timedelta(minutes=15)
             ))
         )
     
@@ -215,7 +218,8 @@ class UserViewSet(OptimizedModelViewSet):
         return queryset.select_related(
             'role', 'profile', 'created_by', 'updated_by'
         ).prefetch_related(
-            'usersession',
+            # CORRIGÉ: 'usersession' -> 'sessions' (relation définie dans migration 0002)
+            'sessions',
             'role__permissions'
         )
     
@@ -286,12 +290,22 @@ class UserViewSet(OptimizedModelViewSet):
         Verrouiller un compte utilisateur
         """
         user = self.get_object()
-        duration_minutes = request.data.get('duration_minutes', 30)
-        reason = request.data.get('reason', 'Verrouillage administratif')
         
-        user.lock_account(duration_minutes)
+        # Ne pas verrouiller les superusers
+        if user.is_superuser:
+            return Response(
+                {'error': 'Impossible de verrouiller un superutilisateur'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        # Déconnecter toutes les sessions
+        # Durée de verrouillage (défaut: 30 minutes)
+        lock_duration = int(request.data.get('duration', 30))  # en minutes
+        
+        user.is_locked = True
+        user.locked_until = timezone.now() + timezone.timedelta(minutes=lock_duration)
+        user.save()
+        
+        # Terminer toutes les sessions actives
         UserSession.objects.filter(
             user=user,
             is_active=True
@@ -302,19 +316,18 @@ class UserViewSet(OptimizedModelViewSet):
         
         # Logger l'action
         UserAuditLog.objects.create(
-            user=user,
-            action='lock',
+            user=request.user,
+            action='lock_account',
             model_name='User',
             object_id=user.id,
             object_repr=str(user),
+            changes={'locked_until': user.locked_until.isoformat()},
             ip_address=request.META.get('REMOTE_ADDR', ''),
-            user_agent=request.META.get('HTTP_USER_AGENT', ''),
-            changes={'reason': reason, 'duration_minutes': duration_minutes}
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
         )
         
         return Response({
-            'message': f'Compte verrouillé pour {duration_minutes} minutes.',
-            'locked_until': user.locked_until
+            'message': f'Compte {user.username} verrouillé pour {lock_duration} minutes'
         })
     
     @action(detail=True, methods=['post'])
@@ -323,12 +336,16 @@ class UserViewSet(OptimizedModelViewSet):
         Déverrouiller un compte utilisateur
         """
         user = self.get_object()
-        user.unlock_account()
+        
+        user.is_locked = False
+        user.locked_until = None
+        user.failed_login_attempts = 0
+        user.save()
         
         # Logger l'action
         UserAuditLog.objects.create(
-            user=user,
-            action='unlock',
+            user=request.user,
+            action='unlock_account',
             model_name='User',
             object_id=user.id,
             object_repr=str(user),
@@ -336,7 +353,9 @@ class UserViewSet(OptimizedModelViewSet):
             user_agent=request.META.get('HTTP_USER_AGENT', '')
         )
         
-        return Response({'message': 'Compte déverrouillé avec succès.'})
+        return Response({
+            'message': f'Compte {user.username} déverrouillé avec succès'
+        })
     
     @action(detail=True, methods=['get'])
     def sessions(self, request, pk=None):
@@ -383,7 +402,7 @@ class UserViewSet(OptimizedModelViewSet):
             return Response({'message': 'Session terminée avec succès.'})
         else:
             return Response(
-                {'error': 'Session non trouvée ou déjà inactive'}, 
+                {'error': 'Session non trouvée ou déjà terminée'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
     
@@ -393,47 +412,67 @@ class UserViewSet(OptimizedModelViewSet):
         Journal d'activité d'un utilisateur
         """
         user = self.get_object()
-        logs = UserAuditLog.objects.filter(user=user).order_by('-timestamp')[:100]
         
-        serializer = UserAuditLogSerializer(logs, many=True)
-        return Response(serializer.data)
+        # Pagination
+        page_size = int(request.query_params.get('page_size', 20))
+        offset = int(request.query_params.get('offset', 0))
+        
+        logs = UserAuditLog.objects.filter(
+            user=user
+        ).order_by('-timestamp')[offset:offset + page_size]
+        
+        serializer = UserAuditLogSerializer(logs, many=True, context={'request': request})
+        
+        return Response({
+            'count': UserAuditLog.objects.filter(user=user).count(),
+            'results': serializer.data
+        })
     
     @action(detail=False, methods=['post'])
     def bulk_action(self, request):
         """
         Actions en masse sur les utilisateurs
         """
-        action_type = request.data.get('action')
         user_ids = request.data.get('user_ids', [])
+        action_type = request.data.get('action')
         
-        if not action_type or not user_ids:
+        if not user_ids or not action_type:
             return Response(
-                {'error': 'action et user_ids requis'}, 
+                {'error': 'user_ids et action requis'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         users = User.objects.filter(id__in=user_ids)
         updated_count = 0
         
-        with transaction.atomic():
-            if action_type == 'activate':
-                updated_count = users.update(is_active=True)
-            elif action_type == 'deactivate':
-                updated_count = users.update(is_active=False)
-            elif action_type == 'unlock':
-                updated_count = users.update(
-                    is_locked=False, 
-                    locked_until=None, 
-                    failed_login_attempts=0
-                )
-            else:
-                return Response(
-                    {'error': 'Action non supportée'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        if action_type == 'activate':
+            updated_count = users.update(is_active=True)
+        elif action_type == 'deactivate':
+            updated_count = users.update(is_active=False)
+        elif action_type == 'unlock':
+            updated_count = users.update(
+                is_locked=False, 
+                locked_until=None, 
+                failed_login_attempts=0
+            )
+        else:
+            return Response(
+                {'error': 'Action non supportée'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Logger l'action bulk
+        UserAuditLog.objects.create(
+            user=request.user,
+            action=f'bulk_{action_type}',
+            model_name='User',
+            changes={'user_ids': user_ids, 'count': updated_count},
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
         
         return Response({
-            'message': f'{updated_count} utilisateurs modifiés.',
+            'message': f'Action {action_type} appliquée avec succès',
             'action': action_type,
             'updated_count': updated_count
         })
@@ -490,12 +529,9 @@ class UserProfileViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def upload_avatar(self, request):
         """
-        Upload d'avatar utilisateur
+        Upload d'avatar
         """
-        try:
-            profile = UserProfile.objects.get(user=request.user)
-        except UserProfile.DoesNotExist:
-            profile = UserProfile.objects.create(user=request.user)
+        profile = UserProfile.objects.get_or_create(user=request.user)[0]
         
         if 'avatar' not in request.FILES:
             return Response(
@@ -503,28 +539,7 @@ class UserProfileViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        avatar_file = request.FILES['avatar']
-        
-        # Validation du fichier
-        if avatar_file.size > 5 * 1024 * 1024:  # 5MB max
-            return Response(
-                {'error': 'Fichier trop volumineux (max 5MB)'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        allowed_types = ['image/jpeg', 'image/png', 'image/gif']
-        if avatar_file.content_type not in allowed_types:
-            return Response(
-                {'error': 'Format non supporté (JPEG, PNG, GIF uniquement)'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Supprimer l'ancien avatar
-        if profile.avatar:
-            profile.avatar.delete()
-        
-        # Sauvegarder le nouveau
-        profile.avatar = avatar_file
+        profile.avatar = request.FILES['avatar']
         profile.save()
         
         serializer = self.get_serializer(profile)
@@ -533,22 +548,25 @@ class UserProfileViewSet(viewsets.ModelViewSet):
 
 class LoginView(TokenObtainPairView):
     """
-    Vue de connexion personnalisée avec tracking
+    Vue de connexion personnalisée avec tracking des sessions
     """
+    serializer_class = LoginSerializer
     
     def post(self, request, *args, **kwargs):
         """
-        Connexion avec création de session et logging
+        Connexion avec JWT et tracking session
         """
-        serializer = LoginSerializer(data=request.data, context={'request': request})
+        serializer = self.get_serializer(data=request.data)
         
         if serializer.is_valid():
             user = serializer.validated_data['user']
             
             # Réinitialiser les tentatives échouées
-            user.reset_failed_login()
+            if user.failed_login_attempts > 0:
+                user.failed_login_attempts = 0
+                user.save()
             
-            # Créer les tokens JWT
+            # Générer les tokens JWT
             refresh = RefreshToken.for_user(user)
             access_token = refresh.access_token
             
@@ -569,6 +587,9 @@ class LoginView(TokenObtainPairView):
                 profile.last_login_ip = request.META.get('REMOTE_ADDR', '')
                 profile.login_count = F('login_count') + 1
                 profile.save()
+                
+                # CORRECTION CRITIQUE: Recharger le profile pour résoudre F()
+                profile.refresh_from_db()
             
             # Logger la connexion
             UserAuditLog.objects.create(

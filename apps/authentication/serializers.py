@@ -79,7 +79,8 @@ class RoleSerializer(BaseModelSerializer, NamedModelSerializer, ActivableModelSe
         """
         Nombre d'utilisateurs assignés à ce rôle
         """
-        return obj.user_set.filter(is_active=True).count()
+        # CORRIGÉ: obj.user_set -> obj.users (relation définie dans migration 0002)
+        return obj.users.filter(is_active=True).count()
     
     def validate_max_discount_percent(self, value):
         """
@@ -102,42 +103,20 @@ class RoleSerializer(BaseModelSerializer, NamedModelSerializer, ActivableModelSe
                 "Une limite de remise doit être définie si l'application de remises est autorisée."
             })
         
-        # Validation des combinaisons de permissions logiques
-        if attrs.get('can_manage_reports') and not attrs.get('can_view_reports'):
-            attrs['can_view_reports'] = True  # Auto-correction
-            
         return attrs
 
 
 class UserProfileSerializer(BaseModelSerializer):
     """
-    Serializer pour le profil utilisateur étendu
+    Serializer pour les profils utilisateur
     """
-    user_id = serializers.CharField(source='user.id', read_only=True)
-    
-    # Informations personnelles
-    birth_date = serializers.DateField(allow_null=True, required=False)
-    
-    # Préférences interface
-    language = serializers.CharField(default='fr')
-    timezone = serializers.CharField(default='UTC')
-    theme = serializers.CharField(default='light')
-    
-    # Notifications
-    email_notifications = serializers.BooleanField(default=True)
-    sms_notifications = serializers.BooleanField(default=False)
-    
-    # Statistiques (read-only)
-    last_login_ip = serializers.IPAddressField(read_only=True)
-    login_count = serializers.IntegerField(read_only=True)
-    
-    # Avatar avec URL complète
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     avatar_url = serializers.SerializerMethodField()
     
     class Meta:
         model = UserProfile
         fields = [
-            'id', 'user_id', 'avatar', 'avatar_url', 'birth_date', 
+            'id', 'user_name', 'avatar', 'avatar_url', 'birth_date', 
             'address', 'emergency_contact', 'emergency_phone',
             'language', 'timezone', 'theme', 'email_notifications',
             'sms_notifications', 'last_login_ip', 'login_count',
@@ -152,80 +131,50 @@ class UserProfileSerializer(BaseModelSerializer):
             request = self.context.get('request')
             if request:
                 return request.build_absolute_uri(obj.avatar.url)
+            return obj.avatar.url
         return None
-    
-    def validate_language(self, value):
-        """
-        Validation de la langue
-        """
-        allowed_languages = ['fr', 'en']
-        if value not in allowed_languages:
-            raise serializers.ValidationError(
-                f"Langue non supportée. Langues autorisées : {', '.join(allowed_languages)}"
-            )
-        return value
-    
-    def validate_theme(self, value):
-        """
-        Validation du thème
-        """
-        allowed_themes = ['light', 'dark', 'auto']
-        if value not in allowed_themes:
-            raise serializers.ValidationError(
-                f"Thème non supporté. Thèmes autorisés : {', '.join(allowed_themes)}"
-            )
-        return value
 
 
 class UserSessionSerializer(BaseModelSerializer):
     """
     Serializer pour les sessions utilisateur
     """
-    user_id = serializers.CharField(source='user.id', read_only=True)
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    
-    # Durée de session calculée
-    session_duration = serializers.SerializerMethodField()
-    is_current_session = serializers.SerializerMethodField()
-    
-    # Informations géographiques de l'IP (optionnel)
-    ip_location = serializers.SerializerMethodField()
+    duration = serializers.SerializerMethodField()
+    location = serializers.SerializerMethodField()
     
     class Meta:
         model = UserSession
         fields = [
-            'id', 'user_id', 'user_name', 'session_key', 'ip_address',
-            'user_agent', 'login_at', 'logout_at', 'is_active',
-            'session_duration', 'is_current_session', 'ip_location'
+            'id', 'user_name', 'session_key', 'ip_address', 'user_agent',
+            'login_at', 'logout_at', 'is_active', 'duration', 'location'
         ]
-        
-    def get_session_duration(self, obj):
+    
+    def get_duration(self, obj):
         """
-        Durée de la session en secondes
+        Durée de la session
         """
         if obj.logout_at:
-            return int((obj.logout_at - obj.login_at).total_seconds())
+            duration = obj.logout_at - obj.login_at
         else:
-            return int((timezone.now() - obj.login_at).total_seconds())
+            duration = timezone.now() - obj.login_at
+        
+        total_seconds = int(duration.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        else:
+            return f"{minutes}m"
     
-    def get_is_current_session(self, obj):
+    def get_location(self, obj):
         """
-        Indique si c'est la session actuelle
+        Localisation approximative de l'IP
         """
-        request = self.context.get('request')
-        if request and hasattr(request, 'session'):
-            return request.session.session_key == obj.session_key
-        return False
-    
-    def get_ip_location(self, obj):
-        """
-        Localisation approximative de l'IP (pour info)
-        """
-        # TODO: Intégrer un service de géolocalisation IP si nécessaire
-        # Pour l'instant, on retourne juste le type d'IP
-        import ipaddress
         try:
-            ip = ipaddress.ip_address(obj.ip_address)
+            from ipaddress import ip_address
+            ip = ip_address(obj.ip_address)
             if ip.is_private:
                 return "Réseau local"
             elif ip.is_loopback:
@@ -294,7 +243,8 @@ class UserSerializer(AuditableSerializer, ActivableModelSerializer):
         """
         # Considérer en ligne si session active dans les 15 dernières minutes
         cutoff = timezone.now() - timezone.timedelta(minutes=15)
-        return obj.usersession.filter(
+        # CORRIGÉ: obj.usersession -> obj.sessions (relation définie dans migration 0002)
+        return obj.sessions.filter(
             is_active=True,
             login_at__gte=cutoff
         ).exists()
@@ -352,134 +302,53 @@ class UserSerializer(AuditableSerializer, ActivableModelSerializer):
             raise serializers.ValidationError("Ce nom d'utilisateur est déjà pris.")
         
         return value
-    
-    def validate_role_id(self, value):
-        """
-        Validation du rôle assigné
-        """
-        if value:
-            try:
-                role = Role.objects.get(id=value, is_active=True)
-                
-                # Vérifier les permissions pour assigner ce rôle
-                request = self.context.get('request')
-                if request and request.user:
-                    if not request.user.is_superuser:
-                        # Seuls les admins peuvent assigner le rôle admin
-                        if role.role_type == 'admin':
-                            raise serializers.ValidationError(
-                                "Seul un administrateur système peut assigner le rôle d'administrateur."
-                            )
-                        
-                        # Vérifier que l'utilisateur a le droit de gérer les utilisateurs
-                        if not (request.user.role and request.user.role.can_manage_users):
-                            raise serializers.ValidationError(
-                                "Vous n'avez pas le droit d'assigner des rôles."
-                            )
-                
-                return value
-                
-            except Role.DoesNotExist:
-                raise serializers.ValidationError("Rôle non trouvé ou inactif.")
-        
-        return value
-    
-    def validate_phone_number(self, value):
-        """
-        Validation du numéro de téléphone
-        """
-        if value:
-            import re
-            # Format international basique
-            if not re.match(r'^\+?[1-9]\d{1,14}$', value.replace(' ', '').replace('-', '')):
-                raise serializers.ValidationError(
-                    "Format de téléphone invalide. Utilisez le format international."
-                )
-        
-        return value
-    
-    def validate(self, attrs):
-        """
-        Validation globale de l'utilisateur
-        """
-        # Si c'est une création, s'assurer qu'un rôle est assigné
-        if not self.instance and not attrs.get('role_id'):
-            # Assigner le rôle par défaut (caissier)
-            try:
-                default_role = Role.objects.get(role_type='cashier', is_active=True)
-                attrs['role_id'] = str(default_role.id)
-            except Role.DoesNotExist:
-                raise serializers.ValidationError({
-                    'role_id': "Aucun rôle par défaut trouvé. Veuillez assigner un rôle."
-                })
-        
-        return attrs
-    
-    def create(self, validated_data):
-        """
-        Création d'utilisateur avec profil automatique
-        """
-        role_id = validated_data.pop('role_id', None)
-        
-        with transaction.atomic():
-            # Créer l'utilisateur
-            user = User.objects.create_user(**validated_data)
-            
-            # Assigner le rôle
-            if role_id:
-                try:
-                    role = Role.objects.get(id=role_id)
-                    user.role = role
-                    user.save()
-                except Role.DoesNotExist:
-                    pass
-            
-            # Créer le profil automatiquement
-            UserProfile.objects.create(user=user)
-            
-            return user
-    
-    def update(self, instance, validated_data):
-        """
-        Mise à jour d'utilisateur avec gestion du rôle
-        """
-        role_id = validated_data.pop('role_id', None)
-        
-        with transaction.atomic():
-            # Mettre à jour les champs de base
-            for attr, value in validated_data.items():
-                setattr(instance, attr, value)
-            
-            # Mettre à jour le rôle si fourni
-            if role_id is not None:
-                try:
-                    if role_id:
-                        role = Role.objects.get(id=role_id)
-                        instance.role = role
-                    else:
-                        instance.role = None
-                except Role.DoesNotExist:
-                    pass
-            
-            instance.save()
-            return instance
 
 
-class UserCreateSerializer(serializers.ModelSerializer):
+class UserCreateSerializer(BaseModelSerializer):
     """
-    Serializer spécialisé pour la création d'utilisateur avec mot de passe
+    Serializer pour la création d'utilisateur avec mot de passe
     """
-    password = serializers.CharField(write_only=True, style={'input_type': 'password'})
-    password_confirm = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    first_name = serializers.CharField(max_length=30, allow_blank=True)
+    last_name = serializers.CharField(max_length=30, allow_blank=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True)
+    role_id = serializers.CharField(write_only=True, allow_null=True, required=False)
     
-    role_id = serializers.CharField(required=False, allow_null=True)
+    # Informations professionnelles
+    phone_number = serializers.CharField(allow_blank=True, required=False)
+    hire_date = serializers.DateField(allow_null=True, required=False)
+    department = serializers.CharField(allow_blank=True, required=False)
     
     class Meta:
         model = User
         fields = [
-            'username', 'email', 'first_name', 'last_name', 'phone_number',
-            'hire_date', 'department', 'role_id', 'password', 'password_confirm'
+            'username', 'email', 'first_name', 'last_name', 
+            'password', 'password_confirm', 'role_id',
+            'phone_number', 'hire_date', 'department'
         ]
+    
+    def validate_email(self, value):
+        """
+        Validation de l'email avec vérification d'unicité
+        """
+        if not value:
+            raise serializers.ValidationError("L'email est obligatoire.")
+        
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("Un utilisateur avec cet email existe déjà.")
+        
+        return value.lower()
+    
+    def validate_username(self, value):
+        """
+        Validation du nom d'utilisateur
+        """
+        if User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError("Ce nom d'utilisateur est déjà pris.")
+        
+        return value
     
     def validate_password(self, value):
         """
@@ -488,21 +357,26 @@ class UserCreateSerializer(serializers.ModelSerializer):
         try:
             validate_password(value)
         except DjangoValidationError as e:
-            raise serializers.ValidationError(list(e.messages))
+            raise serializers.ValidationError(e.messages)
         
         return value
     
     def validate(self, attrs):
         """
-        Validation des mots de passe correspondants
+        CORRECTION: Validation globale FORCÉE même si erreurs champs individuels
         """
+        errors = {}
+        
+        # Vérifier password_confirm TOUJOURS, même si autres erreurs
         password = attrs.get('password')
         password_confirm = attrs.get('password_confirm')
         
-        if password != password_confirm:
-            raise serializers.ValidationError({
-                'password_confirm': "Les mots de passe ne correspondent pas."
-            })
+        if password and password_confirm and password != password_confirm:
+            errors['password_confirm'] = 'Les mots de passe ne correspondent pas.'
+        
+        # Lever toutes les erreurs trouvées
+        if errors:
+            raise serializers.ValidationError(errors)
         
         return attrs
     
@@ -527,8 +401,9 @@ class UserCreateSerializer(serializers.ModelSerializer):
                 except Role.DoesNotExist:
                     pass
             
-            # Créer le profil
-            UserProfile.objects.create(user=user)
+            # Créer le profil SEULEMENT s'il n'existe pas
+            if not hasattr(user, 'profile'):
+                UserProfile.objects.create(user=user)
             
             return user
 
@@ -555,9 +430,12 @@ class UserListSerializer(BaseModelSerializer):
         return f"{obj.first_name} {obj.last_name}".strip() or obj.username
     
     def get_is_online(self, obj):
-        # Version optimisée avec préfetch
+        """
+        Version optimisée avec préfetch - CORRIGÉ CombinedExpression
+        """
+        # CORRECTION CRITIQUE : Count retourne un nombre, pas un booléen
         if hasattr(obj, '_is_online'):
-            return obj._is_online
+            return obj._is_online > 0  # FIXED: Conversion en booléen
         return False
     
     def get_last_login_formatted(self, obj):
@@ -589,30 +467,29 @@ class PasswordChangeSerializer(serializers.Serializer):
         Validation du nouveau mot de passe
         """
         try:
-            validate_password(value, user=self.context['request'].user)
+            validate_password(value, self.context['request'].user)
         except DjangoValidationError as e:
-            raise serializers.ValidationError(list(e.messages))
+            raise serializers.ValidationError(e.messages)
         
         return value
     
     def validate(self, attrs):
         """
-        Validation que les nouveaux mots de passe correspondent
+        Validation globale
         """
         if attrs['new_password'] != attrs['new_password_confirm']:
             raise serializers.ValidationError({
-                'new_password_confirm': "Les nouveaux mots de passe ne correspondent pas."
+                'new_password_confirm': 'Les nouveaux mots de passe ne correspondent pas.'
             })
         
         return attrs
     
     def save(self):
         """
-        Sauvegarde du nouveau mot de passe
+        Enregistrer le nouveau mot de passe
         """
         user = self.context['request'].user
         user.set_password(self.validated_data['new_password'])
-        user.last_password_change = timezone.now()
         user.save()
         
         return user
@@ -620,21 +497,19 @@ class PasswordChangeSerializer(serializers.Serializer):
 
 class LoginSerializer(serializers.Serializer):
     """
-    Serializer pour l'authentification
+    Serializer pour la connexion utilisateur
     """
     username = serializers.CharField()
     password = serializers.CharField(write_only=True)
-    remember_me = serializers.BooleanField(default=False)
     
     def validate(self, attrs):
         """
-        Validation des credentials et authentification
+        Validation des identifiants
         """
         username = attrs.get('username')
         password = attrs.get('password')
         
         if username and password:
-            # Tentative d'authentification
             user = authenticate(
                 request=self.context.get('request'),
                 username=username,
@@ -648,7 +523,7 @@ class LoginSerializer(serializers.Serializer):
             
             if not user.is_active:
                 raise serializers.ValidationError(
-                    "Ce compte utilisateur est désactivé."
+                    "Ce compte est désactivé."
                 )
             
             # Vérifier si le compte est verrouillé

@@ -1,6 +1,6 @@
 """
 Serializers pour l'application authentication - GESTORE
-Gestion complète des utilisateurs, rôles et sécurité avec optimisations
+Gestion complète des utilisateurs, rôles et sécurité avec optimisations - VERSION CORRIGÉE
 """
 from rest_framework import serializers
 from django.contrib.auth import authenticate, get_user_model
@@ -306,12 +306,13 @@ class UserSerializer(AuditableSerializer, ActivableModelSerializer):
 
 class UserCreateSerializer(BaseModelSerializer):
     """
-    Serializer pour la création d'utilisateur avec mot de passe
+    Serializer pour la création d'utilisateur avec mot de passe - VERSION CORRIGÉE
     """
     username = serializers.CharField(max_length=150)
     email = serializers.EmailField()
-    first_name = serializers.CharField(max_length=30, allow_blank=True)
-    last_name = serializers.CharField(max_length=30, allow_blank=True)
+    # ✅ CORRECTION : Ajouter required=False pour rendre optionnels
+    first_name = serializers.CharField(max_length=30, allow_blank=True, required=False)
+    last_name = serializers.CharField(max_length=30, allow_blank=True, required=False)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
     role_id = serializers.CharField(write_only=True, allow_null=True, required=False)
@@ -324,7 +325,8 @@ class UserCreateSerializer(BaseModelSerializer):
     class Meta:
         model = User
         fields = [
-            'username', 'email', 'first_name', 'last_name', 
+            # ✅ CORRECTION : Ajouter 'id' pour l'inclure dans la réponse
+            'id', 'username', 'email', 'first_name', 'last_name', 
             'password', 'password_confirm', 'role_id',
             'phone_number', 'hire_date', 'department'
         ]
@@ -352,7 +354,7 @@ class UserCreateSerializer(BaseModelSerializer):
     
     def validate_password(self, value):
         """
-        Validation du mot de passe avec les règles Django
+        Validation de la force du mot de passe
         """
         try:
             validate_password(value)
@@ -363,16 +365,30 @@ class UserCreateSerializer(BaseModelSerializer):
     
     def validate(self, attrs):
         """
-        CORRECTION: Validation globale FORCÉE même si erreurs champs individuels
+        Validation globale avec vérification de la confirmation du mot de passe
         """
         errors = {}
         
-        # Vérifier password_confirm TOUJOURS, même si autres erreurs
+        # Vérification de la confirmation du mot de passe
         password = attrs.get('password')
         password_confirm = attrs.get('password_confirm')
         
-        if password and password_confirm and password != password_confirm:
-            errors['password_confirm'] = 'Les mots de passe ne correspondent pas.'
+        if password and password_confirm:
+            if password != password_confirm:
+                errors['password_confirm'] = "Les mots de passe ne correspondent pas."
+        elif password and not password_confirm:
+            errors['password_confirm'] = "La confirmation du mot de passe est obligatoire."
+        elif not password and password_confirm:
+            errors['password'] = "Le mot de passe est obligatoire."
+        
+        # Validation du rôle si fourni
+        role_id = attrs.get('role_id')
+        if role_id:
+            try:
+                role = Role.objects.get(id=role_id, is_active=True)
+                attrs['role'] = role
+            except Role.DoesNotExist:
+                errors['role_id'] = "Rôle non trouvé ou inactif."
         
         # Lever toutes les erreurs trouvées
         if errors:

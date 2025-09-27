@@ -1,5 +1,5 @@
 """
-Configuration Django de base pour GESTORE
+Configuration Django de base pour GESTORE - MISE À JOUR
 """
 import os
 from pathlib import Path
@@ -30,14 +30,14 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    'apps.core',
-    'apps.authentication',
-    'apps.inventory',
-    'apps.sales',
-    'apps.suppliers',
-    'apps.reporting',
-    'apps.sync',
-    'apps.licensing',
+    'apps.core.apps.CoreConfig',
+    'apps.authentication.apps.AuthenticationConfig',
+    'apps.inventory.apps.InventoryConfig',
+    'apps.sales.apps.SalesConfig',
+    'apps.suppliers.apps.SuppliersConfig',
+    'apps.reporting.apps.ReportingConfig',
+    'apps.sync.apps.SyncConfig',
+    'apps.licensing.apps.LicensingConfig',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -135,5 +135,39 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
 }
 
-# Custom user model
+# Custom user model - IMPORTANT!
 AUTH_USER_MODEL = 'authentication.User'
+
+# Configuration des fichiers
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
+
+# Configuration des sessions
+SESSION_COOKIE_AGE = 3600  # 1 heure
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# Configuration de l'admin
+ADMIN_URL = 'admin/'
+
+# Configuration de cache par défaut
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    }
+}
+
+# Configuration email (pour les notifications)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Configuration GESTORE spécifique
+GESTORE_SETTINGS = {
+    'VERSION': '1.0.0',
+    'BUILD_NUMBER': '001',
+    'ENABLE_SYNC': True,
+    'ENABLE_OFFLINE_MODE': True,
+    'DEFAULT_CURRENCY': 'XOF',  # Franc CFA
+    'DEFAULT_COUNTRY': 'CI',    # Côte d'Ivoire
+    'DEFAULT_TIMEZONE': 'Africa/Abidjan',
+    'DEMO_MODE': False,
+}

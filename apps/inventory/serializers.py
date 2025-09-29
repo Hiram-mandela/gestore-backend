@@ -374,6 +374,9 @@ class ArticleListSerializer(BaseModelSerializer, NamedModelSerializer, Activable
     def get_is_low_stock(self, obj):
         """Indicateur stock bas"""
         current_stock = self.get_current_stock(obj)
+        # Gérer le cas où current_stock ou min_stock_level est None
+        if current_stock is None or obj.min_stock_level is None:
+            return False
         return obj.manage_stock and current_stock <= obj.min_stock_level
     
     def get_margin_percent(self, obj):

@@ -40,6 +40,43 @@ class UnitOfMeasure(BaseModel, NamedModel, ActivableModel):
         ordering = ['name']
 
 
+class UnitConversion(BaseModel):
+    """
+    Conversions entre unités de mesure
+    Ex: 1 kg = 1000 g, 1 boîte = 12 pièces
+    """
+    from_unit = models.ForeignKey(
+        UnitOfMeasure,
+        on_delete=models.CASCADE,
+        related_name='conversions_from',
+        verbose_name="Unité source"
+    )
+    
+    to_unit = models.ForeignKey(
+        UnitOfMeasure,
+        on_delete=models.CASCADE,
+        related_name='conversions_to',
+        verbose_name="Unité cible"
+    )
+    
+    conversion_factor = models.DecimalField(
+        max_digits=15,
+        decimal_places=6,
+        validators=[MinValueValidator(Decimal('0.000001'))],
+        verbose_name="Facteur de conversion",
+        help_text="Multiplicateur pour convertir de l'unité source vers l'unité cible"
+    )
+    
+    def __str__(self):
+        return f"1 {self.from_unit.symbol} = {self.conversion_factor} {self.to_unit.symbol}"
+
+    class Meta:
+        db_table = 'inventory_unit_conversion'
+        verbose_name = 'Conversion d\'unité'
+        verbose_name_plural = 'Conversions d\'unités'
+        unique_together = ['from_unit', 'to_unit']
+
+
 class Category(BaseModel, NamedModel, ActivableModel, OrderedModel):
     """
     Catégories et sous-catégories d'articles
@@ -511,6 +548,133 @@ class ArticleBarcode(BaseModel):
         db_table = 'inventory_article_barcode'
         verbose_name = 'Code-barres article'
         verbose_name_plural = 'Codes-barres articles'
+
+
+class ArticleImage(BaseModel, OrderedModel):
+    """
+    Images additionnelles pour un article
+    Gestion de multiples images par article
+    """
+    article = models.ForeignKey(
+        Article,
+        on_delete=models.CASCADE,
+        related_name='images',
+        verbose_name="Article"
+    )
+    
+    image = models.ImageField(
+        upload_to='articles/images/',
+        verbose_name="Image"
+    )
+    
+    alt_text = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name="Texte alternatif",
+        help_text="Description de l'image pour l'accessibilité"
+    )
+    
+    is_primary = models.BooleanField(
+        default=False,
+        verbose_name="Image principale"
+    )
+    
+    caption = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name="Légende"
+    )
+
+    class Meta:
+        db_table = 'inventory_article_image'
+        verbose_name = 'Image d\'article'
+        verbose_name_plural = 'Images d\'articles'
+        ordering = ['article', 'order', '-is_primary']
+
+
+class PriceHistory(AuditableModel):
+    """
+    Historique des modifications de prix
+    Traçabilité complète des changements de tarifs
+    """
+    PRICE_CHANGE_REASONS = [
+        ('cost_increase', 'Augmentation coût fournisseur'),
+        ('cost_decrease', 'Diminution coût fournisseur'),
+        ('margin_adjustment', 'Ajustement marge'),
+        ('promotion', 'Promotion'),
+        ('market_adjustment', 'Ajustement marché'),
+        ('currency_change', 'Variation devise'),
+        ('bulk_update', 'Mise à jour en masse'),
+        ('manual', 'Modification manuelle'),
+    ]
+    
+    article = models.ForeignKey(
+        Article,
+        on_delete=models.CASCADE,
+        related_name='price_history',
+        verbose_name="Article"
+    )
+    
+    # Prix avant modification
+    old_purchase_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Ancien prix d'achat"
+    )
+    
+    old_selling_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Ancien prix de vente"
+    )
+    
+    # Nouveaux prix
+    new_purchase_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Nouveau prix d'achat"
+    )
+    
+    new_selling_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Nouveau prix de vente"
+    )
+    
+    # Métadonnées du changement
+    reason = models.CharField(
+        max_length=20,
+        choices=PRICE_CHANGE_REASONS,
+        verbose_name="Raison du changement"
+    )
+    
+    notes = models.TextField(
+        blank=True,
+        verbose_name="Notes"
+    )
+    
+    effective_date = models.DateTimeField(
+        default=timezone.now,
+        verbose_name="Date d'effet"
+    )
+    
+    def get_purchase_change_percent(self):
+        """Calcule le pourcentage de variation du prix d'achat"""
+        if self.old_purchase_price > 0:
+            return ((self.new_purchase_price - self.old_purchase_price) / self.old_purchase_price) * 100
+        return 0
+    
+    def get_selling_change_percent(self):
+        """Calcule le pourcentage de variation du prix de vente"""
+        if self.old_selling_price > 0:
+            return ((self.new_selling_price - self.old_selling_price) / self.old_selling_price) * 100
+        return 0
+
+    class Meta:
+        db_table = 'inventory_price_history'
+        verbose_name = 'Historique de prix'
+        verbose_name_plural = 'Historiques de prix'
+        ordering = ['-effective_date']
 
 
 class Location(BaseModel, NamedModel, ActivableModel, CodedModel):

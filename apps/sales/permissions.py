@@ -110,7 +110,9 @@ class CanManageCustomers(RoleBasedPermission):
     Permission : gestion des clients
     """
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
+        # Ne pas appeler super() pour éviter le conflit avec RoleBasedPermission
+        # Vérifier d'abord l'authentification de base
+        if not request.user or not request.user.is_authenticated:
             return False
         
         if request.user.is_superuser:

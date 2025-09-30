@@ -70,7 +70,7 @@ urlpatterns = [
     # URLs des apps - ACTIVÉES
     path('api/auth/', include('apps.authentication.urls')),
     path('api/inventory/', include('apps.inventory.urls')),
-    # path('api/sales/', include('apps.sales.urls')),
+    path('api/sales/', include('apps.sales.urls')),
     # path('api/suppliers/', include('apps.suppliers.urls')),
     # path('api/reporting/', include('apps.reporting.urls')),
     # path('api/sync/', include('apps.sync.urls')),

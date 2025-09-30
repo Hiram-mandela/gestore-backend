@@ -168,7 +168,7 @@ class PaymentMethodViewSet(OptimizedModelViewSet):
     """
     queryset = PaymentMethod.objects.all()
     serializer_class = PaymentMethodSerializer
-    permission_classes = [CanManageSales]
+    permission_classes = [CanViewSales]
     
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['payment_type', 'is_active']

@@ -425,10 +425,18 @@ class Sale(AuditableModel):
     
     def calculate_totals(self):
         """Recalcule tous les totaux de la vente"""
+        from decimal import Decimal  # Ajouter l'import si nécessaire en haut du fichier
+        
         items = self.items.all()
         
-        self.subtotal = sum(item.line_total for item in items)
-        self.tax_amount = sum(item.tax_amount for item in items)
+        # Utiliser Decimal pour les sommes
+        self.subtotal = sum((item.line_total for item in items), Decimal('0.00'))
+        self.tax_amount = sum((item.tax_amount for item in items), Decimal('0.00'))
+        
+        # S'assurer que discount_amount est un Decimal
+        if not isinstance(self.discount_amount, Decimal):
+            self.discount_amount = Decimal(str(self.discount_amount))
+        
         self.total_amount = self.subtotal + self.tax_amount - self.discount_amount
         
         # Points fidélité (1 point par euro dépensé)
@@ -568,6 +576,8 @@ class SaleItem(BaseModel):
     )
     
     def save(self, *args, **kwargs):
+        from decimal import Decimal  # Ajouter l'import si nécessaire
+        
         # Copier les informations de l'article
         if self.article:
             self.article_name = self.article.name
@@ -580,11 +590,14 @@ class SaleItem(BaseModel):
         # Calculer les montants
         gross_amount = self.quantity * self.unit_price
         
+        # Forcer la conversion en Decimal
         if self.discount_percentage > 0:
-            self.discount_amount = gross_amount * (self.discount_percentage / 100)
+            self.discount_amount = gross_amount * (self.discount_percentage / Decimal('100'))
+        else:
+            self.discount_amount = Decimal('0.00')  # Initialiser comme Decimal
         
         self.line_total = gross_amount - self.discount_amount
-        self.tax_amount = self.line_total * (self.tax_rate / 100)
+        self.tax_amount = self.line_total * (self.tax_rate / Decimal('100'))
         
         super().save(*args, **kwargs)
 
